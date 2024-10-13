@@ -54,6 +54,30 @@ interface RealtimeEvent {
   event: { [key: string]: any };
 }
 
+// Custom Modal component
+const Modal = ({
+  isOpen,
+  onClose,
+  children,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+}) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content">
+        {children}
+        <button className="modal-close" onClick={onClose}>
+          <X />
+        </button>
+      </div>
+    </div>
+  );
+};
+
 export function ConsolePage() {
   /**
    * Ask user for API Key
@@ -124,6 +148,24 @@ export function ConsolePage() {
     lng: -122.418137,
   });
   const [marker, setMarker] = useState<Coordinates | null>(null);
+  const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
+  const [textInput, setTextInput] = useState('');
+  
+  const [systemPrompt, setSystemPrompt] = useState(instructions);
+  const [isSystemPromptModalOpen, setIsSystemPromptModalOpen] = useState(false);
+  const [tempSystemPrompt, setTempSystemPrompt] = useState(systemPrompt);
+
+  // Add function to handle system prompt update
+  const handleSystemPromptUpdate = useCallback(() => {
+    setSystemPrompt(tempSystemPrompt);
+    setIsSystemPromptModalOpen(false);
+    
+    const client = clientRef.current;
+    if (client && isConnected) {
+      client.updateSession({ instructions: tempSystemPrompt });
+    }
+  }, [tempSystemPrompt, isConnected]);
+
 
   /**
    * Utility for formatting the timing of logs
@@ -185,7 +227,6 @@ export function ConsolePage() {
       {
         type: `input_text`,
         text: `Hello!`,
-        // text: `For testing purposes, I want you to list ten car brands. Number each item, e.g. "one (or whatever number you are one): the item name".`
       },
     ]);
 
@@ -199,7 +240,6 @@ export function ConsolePage() {
    */
   const disconnectConversation = useCallback(async () => {
     setIsConnected(false);
-    setRealtimeEvents([]);
     setItems([]);
     setMemoryKv({});
     setCoords({
@@ -268,6 +308,29 @@ export function ConsolePage() {
     }
     setCanPushToTalk(value === 'none');
   };
+
+  const handleTextSubmit = useCallback(async () => {
+    if (textInput.trim() && isConnected) {
+      console.log('textInput', textInput);
+      const client = clientRef.current;
+      const wavRecorder = wavRecorderRef.current;
+      const wavStreamPlayer = wavStreamPlayerRef.current;
+
+      const trackSampleOffset = await wavStreamPlayer.interrupt();
+      if (trackSampleOffset?.trackId) {
+        const { trackId, offset } = trackSampleOffset;
+        await client.cancelResponse(trackId, offset);
+      }
+
+      client.sendUserMessageContent([
+        {
+          type: 'input_text',
+          text: textInput.trim(),
+        },
+      ]);
+      setTextInput('');
+    }
+  }, [textInput, isConnected]);
 
   /**
    * Auto-scroll the event logs
@@ -384,74 +447,44 @@ export function ConsolePage() {
     // Add tools
     client.addTool(
       {
-        name: 'set_memory',
-        description: 'Saves important data about the user into memory.',
+        name: 'generate_and_show_image',
+        description: 'Generates an image based on a prompt using DALL-E 3 API.',
         parameters: {
           type: 'object',
           properties: {
-            key: {
+            prompt: {
               type: 'string',
-              description:
-                'The key of the memory value. Always use lowercase and underscores, no other characters.',
-            },
-            value: {
-              type: 'string',
-              description: 'Value can be anything represented as a string',
+              description: 'The prompt to generate the image.',
             },
           },
-          required: ['key', 'value'],
+          required: ['prompt'],
         },
       },
-      async ({ key, value }: { [key: string]: any }) => {
-        setMemoryKv((memoryKv) => {
-          const newKv = { ...memoryKv };
-          newKv[key] = value;
-          return newKv;
-        });
+      ({ prompt }: { [key: string]: any }) => {
+        // Immediately send ok message
+        setTimeout(async () => {
+          try {
+            const response = await fetch('https://api.openai.com/v1/images/generations', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`,
+              },
+              body: JSON.stringify({
+                model: 'dall-e-3',
+                prompt: prompt,
+              }),
+            });
+            const data = await response.json();
+            const imageUrl = data.data[0].url;
+            setGeneratedImageUrl(imageUrl);
+          } catch (error) {
+            console.error('Error generating image:', error);
+          }
+        }, 0);
+
+        // Return ok immediately without waiting for image generation
         return { ok: true };
-      }
-    );
-    client.addTool(
-      {
-        name: 'get_weather',
-        description:
-          'Retrieves the weather for a given lat, lng coordinate pair. Specify a label for the location.',
-        parameters: {
-          type: 'object',
-          properties: {
-            lat: {
-              type: 'number',
-              description: 'Latitude',
-            },
-            lng: {
-              type: 'number',
-              description: 'Longitude',
-            },
-            location: {
-              type: 'string',
-              description: 'Name of the location',
-            },
-          },
-          required: ['lat', 'lng', 'location'],
-        },
-      },
-      async ({ lat, lng, location }: { [key: string]: any }) => {
-        setMarker({ lat, lng, location });
-        setCoords({ lat, lng, location });
-        const result = await fetch(
-          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m`
-        );
-        const json = await result.json();
-        const temperature = {
-          value: json.current.temperature_2m as number,
-          units: json.current_units.temperature_2m as string,
-        };
-        const wind_speed = {
-          value: json.current.wind_speed_10m as number,
-          units: json.current_units.wind_speed_10m as string,
-        };
-        setMarker({ lat, lng, location, temperature, wind_speed });
-        return json;
       }
     );
 
@@ -522,8 +555,8 @@ export function ConsolePage() {
           )}
         </div>
       </div>
-      <div className="content-main">
-        <div className="content-logs">
+      <div className="content-main" style={{ display: 'flex' }}>
+        <div className="content-logs" style={{ flex: '1', overflow: 'auto' }}>
           <div className="content-block events">
             <div className="visualization">
               <div className="visualization-entry client">
@@ -681,6 +714,12 @@ export function ConsolePage() {
             )}
             <div className="spacer" />
             <Button
+              label="Edit System Prompt"
+              icon={Edit}
+              onClick={() => setIsSystemPromptModalOpen(true)}
+            />
+            <div className="spacer" />
+            <Button
               label={isConnected ? 'disconnect' : 'connect'}
               iconPosition={isConnected ? 'end' : 'start'}
               icon={isConnected ? X : Zap}
@@ -690,42 +729,66 @@ export function ConsolePage() {
               }
             />
           </div>
+          <div className="content-text-input" style={{ display: 'flex', alignItems: 'center', gap: '5px', width: '100%' }}>
+            <textarea
+              value={textInput}
+              onChange={(e) => setTextInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  //handleTextSubmit();
+                }
+              }}
+              placeholder="Type your message..."
+              disabled={!isConnected}
+              style={{
+                width: '70%',
+                height: '3em',
+                resize: 'none',
+                overflow: 'auto',
+                marginRight: '5px'
+              }}
+            />
+            <Button
+              label="Send"
+              onClick={handleTextSubmit}
+              disabled={!isConnected || !textInput.trim()}
+            />
+          </div>
         </div>
-        <div className="content-right">
-          <div className="content-block map">
-            <div className="content-block-title">get_weather()</div>
-            <div className="content-block-title bottom">
-              {marker?.location || 'not yet retrieved'}
-              {!!marker?.temperature && (
-                <>
-                  <br />
-                  🌡️ {marker.temperature.value} {marker.temperature.units}
-                </>
-              )}
-              {!!marker?.wind_speed && (
-                <>
-                  {' '}
-                  🍃 {marker.wind_speed.value} {marker.wind_speed.units}
-                </>
-              )}
+        <div className="content-right" style={{ flex: '1', display: 'flex', flexDirection: 'column' }}>
+          {generatedImageUrl && (
+            <div className="content-block image" style={{ flex: '1', display: 'flex', flexDirection: 'column' }}>
+              <div className="content-block-body" style={{ flex: '1', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                <img src={generatedImageUrl} alt="Generated" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+              </div>
             </div>
-            <div className="content-block-body full">
-              {coords && (
-                <Map
-                  center={[coords.lat, coords.lng]}
-                  location={coords.location}
-                />
-              )}
-            </div>
-          </div>
-          <div className="content-block kv">
-            <div className="content-block-title">set_memory()</div>
-            <div className="content-block-body content-kv">
-              {JSON.stringify(memoryKv, null, 2)}
-            </div>
-          </div>
+          )}
         </div>
       </div>
+      <Modal
+        isOpen={isSystemPromptModalOpen}
+        onClose={() => setIsSystemPromptModalOpen(false)}
+      >
+        <h2>Edit System Prompt</h2>
+        <textarea
+          value={tempSystemPrompt}
+          onChange={(e) => setTempSystemPrompt(e.target.value)}
+          placeholder="Enter system prompt..."
+          rows={20}
+        />
+        <div className="modal-actions">
+          <Button
+            label="Cancel"
+            onClick={() => setIsSystemPromptModalOpen(false)}
+          />
+          <Button
+            label="Update"
+            buttonStyle="action"
+            onClick={handleSystemPromptUpdate}
+          />
+        </div>
+      </Modal>
     </div>
   );
 }
