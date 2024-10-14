@@ -8,10 +8,10 @@ import { AudioAnalysis } from './analysis/audio_analysis.js';
 export class WavStreamPlayer {
   /**
    * Creates a new WavStreamPlayer instance
-   * @param {{sampleRate?: number}} options
+   * @param {{sampleRate?: number, onAudioFinished?: () => void}} options
    * @returns {WavStreamPlayer}
    */
-  constructor({ sampleRate = 44100 } = {}) {
+  constructor({ sampleRate = 44100, onAudioFinished = () => {} } = {}) {
     this.scriptSrc = StreamProcessorSrc;
     this.sampleRate = sampleRate;
     this.context = null;
@@ -19,6 +19,7 @@ export class WavStreamPlayer {
     this.analyser = null;
     this.trackSampleOffsets = {};
     this.interruptedTrackIds = {};
+    this.onAudioFinished = onAudioFinished;
   }
 
   /**
@@ -81,6 +82,7 @@ export class WavStreamPlayer {
       if (event === 'stop') {
         streamNode.disconnect();
         this.stream = null;
+        this.onAudioFinished();
       } else if (event === 'offset') {
         const { requestId, trackId, offset } = e.data;
         const currentTime = offset / this.sampleRate;

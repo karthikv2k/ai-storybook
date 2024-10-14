@@ -26,6 +26,7 @@ import { Map } from '../components/Map';
 
 import './ConsolePage.scss';
 import { isJsxOpeningLikeElement } from 'typescript';
+import { Runware } from '@runware/sdk-js';
 
 /**
  * Type for result from get_weather() function call
@@ -92,18 +93,6 @@ export function ConsolePage() {
     localStorage.setItem('tmp::voice_api_key', apiKey);
   }
 
-  /**
-   * Instantiate:
-   * - WavRecorder (speech input)
-   * - WavStreamPlayer (speech output)
-   * - RealtimeClient (API client)
-   */
-  const wavRecorderRef = useRef<WavRecorder>(
-    new WavRecorder({ sampleRate: 24000 })
-  );
-  const wavStreamPlayerRef = useRef<WavStreamPlayer>(
-    new WavStreamPlayer({ sampleRate: 24000 })
-  );
   const clientRef = useRef<RealtimeClient>(
     new RealtimeClient(
       LOCAL_RELAY_SERVER_URL
@@ -114,6 +103,34 @@ export function ConsolePage() {
           }
     )
   );
+
+  let storyStarted = false;
+  const onAudioFinished = () => {
+      const client = clientRef.current;
+      if (storyStarted) {
+        console.log('sending continue');
+        client.sendUserMessageContent([
+        {
+          type: 'input_text',
+          text: "continue",
+        },
+      ]); 
+    }
+  };
+
+  /**
+   * Instantiate:
+   * - WavRecorder (speech input)
+   * - WavStreamPlayer (speech output)
+   * - RealtimeClient (API client)
+   */
+  const wavRecorderRef = useRef<WavRecorder>(
+    new WavRecorder({ sampleRate: 24000 })
+  );
+  const wavStreamPlayerRef = useRef<WavStreamPlayer>(
+    new WavStreamPlayer({ sampleRate: 24000, onAudioFinished: onAudioFinished })
+  );
+
 
   /**
    * References for
@@ -150,7 +167,7 @@ export function ConsolePage() {
   const [marker, setMarker] = useState<Coordinates | null>(null);
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
   const [textInput, setTextInput] = useState('');
-  
+  const [sceneTitle, setSceneTitle] = useState('');
   const [systemPrompt, setSystemPrompt] = useState(instructions);
   const [isSystemPromptModalOpen, setIsSystemPromptModalOpen] = useState(false);
   const [tempSystemPrompt, setTempSystemPrompt] = useState(systemPrompt);
@@ -464,20 +481,23 @@ export function ConsolePage() {
         // Immediately send ok message
         setTimeout(async () => {
           try {
-            const response = await fetch('https://api.openai.com/v1/images/generations', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`,
-              },
-              body: JSON.stringify({
-                model: 'dall-e-3',
-                prompt: prompt,
-              }),
+            const runware = new Runware({ apiKey: '7hCokPZ8A9vNogoMcK1IcmN1yUsRrdI2' });
+            const images = await runware.requestImages({
+              positivePrompt: prompt,
+              width: 1024,
+              height: 1024,
+              model: "runware:100@1",
+              numberResults: 1,
+              outputType: "URL",
+              outputFormat: "PNG",
             });
-            const data = await response.json();
-            const imageUrl = data.data[0].url;
-            setGeneratedImageUrl(imageUrl);
+
+            if (images && images.length > 0) {
+              const imageUrl = images[0].imageURL;
+              if (imageUrl) {
+                setGeneratedImageUrl(imageUrl);
+              }
+            }
           } catch (error) {
             console.error('Error generating image:', error);
           }
@@ -485,6 +505,32 @@ export function ConsolePage() {
 
         // Return ok immediately without waiting for image generation
         return { ok: true };
+      }
+    );
+
+    // Add a new function to set the title of the scene
+    client.addTool(
+      {
+        name: 'set_scene_title',
+        description: 'Sets the title of the current scene in the story.',
+        parameters: {
+          type: 'object',
+          properties: {
+            title: {
+              type: 'string',
+              description: 'The title of the scene.',
+            },
+          },
+          required: ['title'],
+        },
+      },
+      ({ title }: { [key: string]: any }) => {
+        // Update the scene title in the UI
+        setGeneratedImageUrl(null);
+        setSceneTitle(title);
+        storyStarted = true;
+        // Return success
+        return { ok: true, message: `Scene title set to: ${title}` };
       }
     );
 
@@ -757,12 +803,18 @@ export function ConsolePage() {
           </div>
         </div>
         <div className="content-right" style={{ flex: '1', display: 'flex', flexDirection: 'column' }}>
-          {generatedImageUrl && (
+          {generatedImageUrl ? (
             <div className="content-block image" style={{ flex: '1', display: 'flex', flexDirection: 'column' }}>
               <div className="content-block-body" style={{ flex: '1', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                 <img src={generatedImageUrl} alt="Generated" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
               </div>
             </div>
+          ) : (
+            sceneTitle && (
+              <div className="content-block image" style={{ flex: '1', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+                <h2>{sceneTitle}</h2>
+              </div>
+            )
           )}
         </div>
       </div>
