@@ -23,7 +23,7 @@ import { X, Edit, Zap, ArrowUp, ArrowDown } from 'react-feather';
 import { Button } from '../components/button/Button';
 import { Toggle } from '../components/toggle/Toggle';
 import { Map } from '../components/Map';
-
+import { StoryBookCanvas } from '../components/storybook_canvas/storybook_canvas';
 import './ConsolePage.scss';
 import { isJsxOpeningLikeElement } from 'typescript';
 import { Runware } from '@runware/sdk-js';
@@ -547,7 +547,15 @@ export function ConsolePage() {
         }
       });
     });
-    client.on('error', (event: any) => console.error(event));
+    client.on('error', (event: any) => {
+      console.error(event);
+      client.sendUserMessageContent([
+        {
+          type: 'input_text',
+          text: 'continue',
+        },
+      ]);
+    });
     client.on('conversation.interrupted', async () => {
       const trackSampleOffset = await wavStreamPlayer.interrupt();
       if (trackSampleOffset?.trackId) {
@@ -802,21 +810,10 @@ export function ConsolePage() {
             />
           </div>
         </div>
-        <div className="content-right" style={{ flex: '1', display: 'flex', flexDirection: 'column' }}>
-          {generatedImageUrl ? (
-            <div className="content-block image" style={{ flex: '1', display: 'flex', flexDirection: 'column' }}>
-              <div className="content-block-body" style={{ flex: '1', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                <img src={generatedImageUrl} alt="Generated" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-              </div>
-            </div>
-          ) : (
-            sceneTitle && (
-              <div className="content-block image" style={{ flex: '1', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-                <h2>{sceneTitle}</h2>
-              </div>
-            )
-          )}
-        </div>
+        <StoryBookCanvas
+          generatedImageUrl={generatedImageUrl}
+          sceneTitle={sceneTitle}
+        />
       </div>
       <Modal
         isOpen={isSystemPromptModalOpen}
